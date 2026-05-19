@@ -1,0 +1,444 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Arcade 8-Ball Billiards 2D</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: #11141a;
+            font-family: 'Segoe UI', Arial, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            color: #ffffff;
+            overflow: hidden;
+        }
+        h1 { 
+            margin: 0 0 5px 0; 
+            font-size: 26px; 
+            font-weight: 800;
+            letter-spacing: 1px;
+            color: #00d2d3;
+        }
+        p { margin: 0 0 25px 0; color: #64748b; font-size: 14px; font-weight: 500; }
+        
+        /* Dashboard Score 2D Flat */
+        #game-ui {
+            display: flex;
+            gap: 30px;
+            margin-bottom: 20px;
+            background: #1e2530;
+            padding: 10px 40px;
+            border-radius: 12px;
+            border: 2px solid #2d3748;
+        }
+        .ui-item {
+            font-size: 14px;
+            font-weight: 700;
+            text-transform: uppercase;
+            color: #94a3b8;
+        }
+        .val { color: #ffffff; font-size: 18px; font-weight: 800; margin-left: 5px; }
+        #status { color: #10b981; }
+
+        /* Area Meja & Power Bar */
+        #table-wrapper {
+            display: flex;
+            align-items: center;
+            gap: 20px;
+        }
+        canvas {
+            background-color: #0f766e; /* Karpet Hijau Toska Flat 2D */
+            border: 16px solid #271711; /* Bingkai Kayu Solid Flat */
+            border-radius: 8px;
+            box-shadow: 0 15px 35px rgba(0,0,0,0.5);
+        }
+
+        /* Power Bar Minimalis 2D */
+        #power-container {
+            width: 16px;
+            height: 400px;
+            background: #1e2530;
+            border: 2px solid #2d3748;
+            border-radius: 4px;
+            position: relative;
+        }
+        #power-bar {
+            width: 100%;
+            height: 0%;
+            background: #ef4444; /* Warna merah solid */
+            position: absolute;
+            bottom: 0;
+            transition: height 0.05s linear;
+        }
+    </style>
+</head>
+<body>
+
+    <h1>POOL BILLIARDS 2D</h1>
+    <p>Arahkan kursor ke belakang bola putih, klik & tahan untuk isi tenaga, lepas untuk memukul</p>
+
+    <div id="game-ui">
+        <div class="ui-item">Skor:<span id="score" class="val">0</span></div>
+        <div class="ui-item">Status:<span id="status" class="val">Siap</span></div>
+        <div class="ui-item">Sisa Bola:<span id="remaining" class="val">15</span></div>
+    </div>
+
+    <div id="table-wrapper">
+        <canvas id="billiardCanvas" width="800" height="400"></canvas>
+        <div id="power-container">
+            <div id="power-bar"></div>
+        </div>
+    </div>
+
+<script>
+    const canvas = document.getElementById('billiardCanvas');
+    const ctx = canvas.getContext('2d');
+    const statusTxt = document.getElementById('status');
+    const scoreTxt = document.getElementById('score');
+    const remainingTxt = document.getElementById('remaining');
+    const powerBar = document.getElementById('power-bar');
+
+    const FRICTION = 0.988; 
+    const BALL_RADIUS = 13;
+    const HOLE_RADIUS = 22; 
+
+    let score = 0;
+    let isAiming = false;
+    let power = 0;
+    let maxPower = 50;
+    let powerDirection = 1;
+    let mouseX = 0;
+    let mouseY = 0;
+
+    // Palette Warna Flat 2D Asli 8-Ball
+    const ballSpecs = [
+        { id: 0, color: '#ffffff', type: 'cue' },      // Putih
+        { id: 1, color: '#f59e0b', type: 'solid' },    // Kuning
+        { id: 2, color: '#3b82f6', type: 'solid' },    // Biru
+        { id: 3, color: '#ef4444', type: 'solid' },    // Merah
+        { id: 4, color: '#8b5cf6', type: 'solid' },    // Ungu
+        { id: 5, color: '#f97316', type: 'solid' },    // Oranye
+        { id: 6, color: '#10b981', type: 'solid' },    // Hijau
+        { id: 7, color: '#991b1b', type: 'solid' },    // Merah Tua
+        { id: 8, color: '#1e293b', type: 'black' },    // 8-Ball Hitam
+        { id: 9, color: '#f59e0b', type: 'stripe' },
+        { id: 10, color: '#3b82f6', type: 'stripe' },
+        { id: 11, color: '#ef4444', type: 'stripe' },
+        { id: 12, color: '#8b5cf6', type: 'stripe' },
+        { id: 13, color: '#f97316', type: 'stripe' },
+        { id: 14, color: '#10b981', type: 'stripe' },
+        { id: 15, color: '#991b1b', type: 'stripe' }
+    ];
+
+    const holes = [
+        { x: 2, y: 2 }, { x: canvas.width / 2, y: 0 }, { x: canvas.width - 2, y: 2 },
+        { x: 2, y: canvas.height - 2 }, { x: canvas.width / 2, y: canvas.height }, { x: canvas.width - 2, y: canvas.height - 2 }
+    ];
+
+    class Ball {
+        constructor(x, y, spec) {
+            this.x = x;
+            this.y = y;
+            this.vx = 0;
+            this.vy = 0;
+            this.id = spec.id;
+            this.color = spec.color;
+            this.type = spec.type;
+            this.active = true;
+        }
+
+        draw() {
+            if (!this.active) return;
+
+            // 1. Lingkaran Dasar Warna (Flat 2D - Tanpa Shading/Kilauan)
+            ctx.beginPath();
+            ctx.arc(this.x, this.y, BALL_RADIUS, 0, Math.PI * 2);
+            ctx.fillStyle = this.color;
+            ctx.fill();
+            ctx.closePath();
+
+            // 2. Desain Strip 2D Gaya Flat Murni
+            if (this.type === 'stripe') {
+                ctx.save();
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, BALL_RADIUS, 0, Math.PI * 2);
+                ctx.clip();
+                
+                // Area putih atas dan bawah melengkung tipis
+                ctx.fillStyle = '#ffffff';
+                ctx.fillRect(this.x - BALL_RADIUS, this.y - BALL_RADIUS, BALL_RADIUS * 2, 4);
+                ctx.fillRect(this.x - BALL_RADIUS, this.y + BALL_RADIUS - 4, BALL_RADIUS * 2, 4);
+                ctx.restore();
+            }
+
+            // 3. Lingkaran Angka Flat Tengah
+            if (this.type !== 'cue') {
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, BALL_RADIUS * 0.45, 0, Math.PI * 2);
+                ctx.fillStyle = '#ffffff';
+                ctx.fill();
+                ctx.closePath();
+
+                ctx.font = 'bold 10px sans-serif';
+                ctx.fillStyle = '#1e293b';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(this.id, this.x, this.y);
+            }
+        }
+
+        update() {
+            if (!this.active) return;
+
+            this.x += this.vx;
+            this.y += this.vy;
+            this.vx *= FRICTION;
+            this.vy *= FRICTION;
+
+            if (Math.abs(this.vx) < 0.04) this.vx = 0;
+            if (Math.abs(this.vy) < 0.04) this.vy = 0;
+
+            if (this.x - BALL_RADIUS < 0) { this.x = BALL_RADIUS; this.vx *= -0.96; }
+            else if (this.x + BALL_RADIUS > canvas.width) { this.x = canvas.width - BALL_RADIUS; this.vx *= -0.96; }
+
+            if (this.y - BALL_RADIUS < 0) { this.y = BALL_RADIUS; this.vy *= -0.96; }
+            else if (this.y + BALL_RADIUS > canvas.height) { this.y = canvas.height - BALL_RADIUS; this.vy *= -0.96; }
+        }
+    }
+
+    let balls = [];
+    let cueBall;
+
+    function inisialisasiGame() {
+        balls = [];
+        cueBall = new Ball(220, canvas.height / 2, ballSpecs[0]);
+        balls.push(cueBall);
+
+        let startX = 520;
+        let startY = canvas.height / 2;
+        let urutanSegitiga = [1, 9, 2, 10, 8, 3, 11, 4, 12, 5, 13, 14, 6, 15, 7];
+        let idx = 0;
+
+        for (let i = 0; i < 5; i++) {
+            for (let j = 0; j <= i; j++) {
+                let bx = startX + (i * BALL_RADIUS * 1.75);
+                let by = startY - (i * BALL_RADIUS * 1.02) + (j * BALL_RADIUS * 2.04);
+                let spec = ballSpecs.find(b => b.id === urutanSegitiga[idx]);
+                balls.push(new Ball(bx, by, spec));
+                idx++;
+            }
+        }
+    }
+
+    function drawTableDetails() {
+        // Garis batas cushion dalam (2D Flat border)
+        ctx.strokeStyle = '#0d5c56';
+        ctx.lineWidth = 4;
+        ctx.strokeRect(0, 0, canvas.width, canvas.height);
+
+        // Menggambar 6 Lubang Hitam Solid 2D
+        holes.forEach(hole => {
+            ctx.beginPath();
+            ctx.arc(hole.x, hole.y, HOLE_RADIUS, 0, Math.PI * 2);
+            ctx.fillStyle = '#0f172a'; // Hitam pekat flat
+            ctx.fill();
+            ctx.closePath();
+        });
+    }
+
+    function checkHoles() {
+        balls.forEach(ball => {
+            if (!ball.active) return;
+
+            holes.forEach(hole => {
+                let dx = ball.x - hole.x;
+                let dy = ball.y - hole.y;
+                let dist = Math.sqrt(dx * dx + dy * dy);
+
+                if (dist < HOLE_RADIUS - 2) {
+                    if (ball.type === 'cue') {
+                        ball.vx = 0; ball.vy = 0;
+                        ball.x = 220; ball.y = canvas.height / 2;
+                        statusTxt.innerText = "Foul! Putih Masuk";
+                        statusTxt.style.color = '#ef4444';
+                    } else {
+                        ball.active = false;
+                        ball.vx = 0; ball.vy = 0;
+                        
+                        if (ball.type === 'black') {
+                            alert(score >= 14 ? "🎉 MENANG!" : "💀 KALAH! Bola 8 masuk duluan.");
+                            inisialisasiGame();
+                            score = 0;
+                        } else {
+                            score++;
+                        }
+                        
+                        scoreTxt.innerText = score;
+                        let remaining = balls.filter(b => b.type !== 'cue' && b.active).length;
+                        remainingTxt.innerText = remaining;
+                    }
+                }
+            });
+        });
+    }
+
+    function handleCollisions() {
+        for (let i = 0; i < balls.length; i++) {
+            for (let j = i + 1; j < balls.length; j++) {
+                let b1 = balls[i];
+                let b2 = balls[j];
+
+                if (!b1.active || !b2.active) continue;
+
+                let dx = b2.x - b1.x;
+                let dy = b2.y - b1.y;
+                let distance = Math.sqrt(dx * dx + dy * dy);
+
+                if (distance < BALL_RADIUS * 2) {
+                    let overlap = (BALL_RADIUS * 2) - distance;
+                    let nx = dx / distance;
+                    let ny = dy / distance;
+
+                    b1.x -= nx * overlap / 2;
+                    b1.y -= ny * overlap / 2;
+                    b2.x += nx * overlap / 2;
+                    b2.y += ny * overlap / 2;
+
+                    let kx = b1.vx - b2.vx;
+                    let ky = b1.vy - b2.vy;
+                    let p = 2 * (nx * kx + ny * ky) / 2;
+
+                    b1.vx -= p * nx;
+                    b1.vy -= p * ny;
+                    b2.vx += p * nx;
+                    b2.vy += p * ny;
+                }
+            }
+        }
+    }
+
+    function areBallsStopped() {
+        return balls.every(b => b.vx === 0 && b.vy === 0);
+    }
+
+    canvas.addEventListener('mousemove', (e) => {
+        let rect = canvas.getBoundingClientRect();
+        mouseX = e.clientX - rect.left;
+        mouseY = e.clientY - rect.top;
+    });
+
+    canvas.addEventListener('mousedown', () => {
+        if (areBallsStopped()) {
+            isAiming = true;
+            power = 0;
+            powerDirection = 1;
+        }
+    });
+
+    canvas.addEventListener('mouseup', () => {
+        if (isAiming) {
+            let dx = cueBall.x - mouseX;
+            let dy = cueBall.y - mouseY;
+            let distance = Math.sqrt(dx * dx + dy * dy);
+
+            cueBall.vx = (dx / distance) * (power * 0.45);
+            cueBall.vy = (dy / distance) * (power * 0.45);
+
+            isAiming = false;
+            power = 0;
+            powerBar.style.height = '0%';
+        }
+    });
+
+    function drawAimLine() {
+        if (!isAiming) return;
+
+        let dx = mouseX - cueBall.x;
+        let dy = mouseY - cueBall.y;
+        let distance = Math.sqrt(dx * dx + dy * dy);
+
+        if (distance === 0) return;
+
+        let targetX = cueBall.x - (dx / distance) * 240;
+        let targetY = cueBall.y - (dy / distance) * 240;
+
+        // 1. Garis Laser 2D Flat Putih Tegas
+        ctx.beginPath();
+        ctx.moveTo(cueBall.x, cueBall.y);
+        ctx.lineTo(targetX, targetY);
+        ctx.strokeStyle = '#ffffff';
+        ctx.lineWidth = 1.5;
+        ctx.setLineDash([6, 4]);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.closePath();
+
+        // 2. Titik Target Prediksi Ring 2D
+        ctx.beginPath();
+        ctx.arc(targetX, targetY, BALL_RADIUS, 0, Math.PI * 2);
+        ctx.strokeStyle = '#00d2d3';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+        ctx.closePath();
+
+        // 3. Stik Biliar Gaya Minimalis 2D Flat
+        ctx.save();
+        ctx.translate(cueBall.x, cueBall.y);
+        ctx.rotate(Math.atan2(dy, dx));
+        
+        ctx.beginPath();
+        ctx.fillStyle = '#f59e0b'; // Batang stik kuning datar
+        ctx.fillRect(22 + power, -2, 140, 4);
+        ctx.fillStyle = '#ef4444'; // Ujung pegangan merah datar
+        ctx.fillRect(162 + power, -3, 60, 6);
+        ctx.closePath();
+        ctx.restore();
+    }
+
+    function gameLoop() {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        drawTableDetails();
+
+        balls.forEach(ball => {
+            ball.update();
+            ball.draw();
+        });
+
+        handleCollisions();
+        checkHoles();
+
+        if (areBallsStopped()) {
+            if (statusTxt.innerText !== "SIAP") {
+                statusTxt.innerText = "SIAP";
+                statusTxt.style.color = "#10b981";
+            }
+
+            if (isAiming) {
+                power += 0.8 * powerDirection;
+                if (power >= maxPower || power <= 0) powerDirection *= -1;
+                
+                let percentage = (power / maxPower) * 100;
+                powerBar.style.height = `${percentage}%`;
+            }
+            drawAimLine();
+        } else {
+            statusTxt.innerText = "BERGERAK...";
+            statusTxt.style.color = "#f59e0b";
+        }
+
+        requestAnimationFrame(gameLoop);
+    }
+
+    inisialisasiGame();
+    gameLoop();
+</script>
+
+</body>
+</html>
